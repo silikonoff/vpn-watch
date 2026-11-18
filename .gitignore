@@ -1,0 +1,9 @@
+/dist/
+/.tmp/
+**/bin/
+**/obj/
+*.user
+*.suo
+*.pfx
+*.p12
+*.pbk
