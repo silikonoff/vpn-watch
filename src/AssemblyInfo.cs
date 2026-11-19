@@ -1,7 +1,7 @@
 using System.Reflection;
 
-[assembly: AssemblyTitle("Наблюдатель VPN")]
+[assembly: AssemblyTitle("silik-vpn-watcher")]
 [assembly: AssemblyDescription("Автоматическое переподключение выбранного VPN-профиля Windows")]
-[assembly: AssemblyProduct("VpnWatch")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
+[assembly: AssemblyProduct("silik-vpn-watcher")]
+[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyFileVersion("1.1.0.0")]

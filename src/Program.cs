@@ -13,6 +13,8 @@ namespace VpnWatch
 {
     internal static class Program
     {
+        internal const string AppName = "silik-vpn-watcher";
+
         [STAThread]
         private static void Main()
         {
@@ -21,7 +23,7 @@ namespace VpnWatch
             {
                 if (!first)
                 {
-                    MessageBox.Show("Наблюдатель VPN уже запущен.", "Наблюдатель VPN", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show(AppName + " уже запущен. Откройте приложение через значок в трее.", AppName, MessageBoxButtons.OK, MessageBoxIcon.Information);
                     return;
                 }
                 Application.EnableVisualStyles();
@@ -82,24 +84,43 @@ namespace VpnWatch
         private readonly NumericUpDown poll = new NumericUpDown(), connectTimeout = new NumericUpDown();
         private readonly NumericUpDown retry = new NumericUpDown(), maxRetry = new NumericUpDown();
         private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer();
+        private readonly NotifyIcon tray = new NotifyIcon();
+        private readonly ContextMenuStrip trayMenu = new ContextMenuStrip();
+        private readonly ToolStripLabel trayStatus = new ToolStripLabel();
+        private readonly ToolStripMenuItem trayStart = new ToolStripMenuItem("Включить наблюдение");
+        private readonly ToolStripMenuItem trayStop = new ToolStripMenuItem("Выключить наблюдение");
+        private readonly ToolStripMenuItem trayExit = new ToolStripMenuItem("Выход из программы");
+        private readonly Icon windowIcon, trayIcon;
         private readonly Stopwatch clock = Stopwatch.StartNew();
         private readonly RetrySchedule schedule = new RetrySchedule();
         private LinkState? link;
         private Ras.DialAttempt pending;
         private long deadline;
-        private bool busy, closing, settingsChanged;
+        private bool busy, closing, exitRequested, settingsChanged;
         private string message = "Выберите профиль Windows. Наблюдение включается вручную.";
 
         public WatchForm()
         {
-            Text = "Наблюдатель VPN";
+            Text = Program.AppName;
             StartPosition = FormStartPosition.CenterScreen;
             AutoScaleMode = AutoScaleMode.Font;
             ClientSize = new Size(610, 388);
             MinimumSize = new Size(580, 430);
             Font = new Font("Segoe UI", 10);
             BackColor = Color.White;
-            Icon = SystemIcons.Application;
+            windowIcon = LoadIcon(SystemInformation.IconSize);
+            Icon = windowIcon;
+            trayIcon = LoadIcon(SystemInformation.SmallIconSize);
+            tray.Icon = trayIcon;
+            tray.ContextMenuStrip = trayMenu;
+            trayMenu.Items.AddRange(new ToolStripItem[] { trayStatus, new ToolStripSeparator(), trayStart, trayStop, new ToolStripSeparator(), trayExit });
+            tray.MouseDoubleClick += delegate(object sender, MouseEventArgs e)
+            {
+                if (e.Button == MouseButtons.Left) RestoreWindow();
+            };
+            trayStart.Click += delegate { StartWatch(); };
+            trayStop.Click += delegate { StopMonitoring(); };
+            trayExit.Click += delegate { exitRequested = true; Close(); };
 
             var flow = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(23, 17, 23, 16) };
             flow.RowStyles.Add(new RowStyle(SizeType.Absolute, 49));
@@ -110,7 +131,7 @@ namespace VpnWatch
             flow.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
             Controls.Add(flow);
 
-            var heading = new Label { Text = "Наблюдатель VPN", Dock = DockStyle.Fill, Font = new Font(Font.FontFamily, 20, FontStyle.Bold), ForeColor = Color.FromArgb(25, 36, 52) };
+            var heading = new Label { Text = Program.AppName, Dock = DockStyle.Fill, Font = new Font(Font.FontFamily, 20, FontStyle.Bold), ForeColor = Color.FromArgb(25, 36, 52) };
             flow.Controls.Add(heading);
             var pick = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 3, Margin = Padding.Empty };
             pick.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 112));
@@ -169,7 +190,7 @@ namespace VpnWatch
             buttons.Controls.Add(connect, 1, 0);
             buttons.Controls.Add(disconnect, 2, 0);
             flow.Controls.Add(buttons);
-            flow.Controls.Add(new Label { Text = "Наблюдение работает, пока открыто это окно.", ForeColor = Color.FromArgb(76, 87, 106), Dock = DockStyle.Fill });
+            flow.Controls.Add(new Label { Text = "Крестик сворачивает приложение в трей.", ForeColor = Color.FromArgb(76, 87, 106), Dock = DockStyle.Fill });
 
             refresh.Click += async delegate { await RefreshProfiles(); };
             profiles.SelectedIndexChanged += delegate { if (!busy) { link = null; Poll(); } };
@@ -183,9 +204,24 @@ namespace VpnWatch
             timer.Interval = (int)poll.Value * 1000;
             timer.Tick += delegate { Poll(); };
             Shown += async delegate { await RefreshProfiles(); if (!closing) timer.Start(); };
-            FormClosing += delegate { CloseSession(); };
-            FormClosed += delegate { timer.Dispose(); };
+            FormClosing += HandleFormClosing;
+            FormClosed += delegate
+            {
+                tray.Dispose();
+                trayMenu.Dispose();
+                trayIcon.Dispose();
+                windowIcon.Dispose();
+                timer.Dispose();
+            };
             Render();
+            tray.Visible = true;
+        }
+
+        private static Icon LoadIcon(Size size)
+        {
+            using (Stream source = typeof(WatchForm).Assembly.GetManifestResourceStream("Watcher.ico"))
+            using (var icon = new Icon(source, size))
+                return (Icon)icon.Clone();
         }
 
         private static void SetupButton(Button button, string title)
@@ -237,14 +273,22 @@ namespace VpnWatch
 
         private void ToggleWatch()
         {
-            if (Selected == null || busy) return;
-            if (schedule.Watching) StopWatch("Наблюдение выключено. Подключённый туннель оставлен открытым.");
-            else
-            {
-                schedule.Start(clock.ElapsedMilliseconds);
-                message = "После обрыва приложение переподключит этот профиль.";
-                Poll();
-            }
+            if (schedule.Watching) StopMonitoring();
+            else StartWatch();
+        }
+
+        private void StartWatch()
+        {
+            if (Selected == null || busy || closing || schedule.Watching) return;
+            schedule.Start(clock.ElapsedMilliseconds);
+            message = "После обрыва приложение переподключит этот профиль.";
+            Poll();
+        }
+
+        private void StopMonitoring()
+        {
+            if (busy || closing || !schedule.Watching) return;
+            StopWatch("Наблюдение выключено. Подключённый туннель оставлен открытым.");
             Render();
         }
 
@@ -360,19 +404,48 @@ namespace VpnWatch
                 link == LinkState.Up ? "Подключён" : pending != null || link == LinkState.Connecting ? "Подключается" :
                 link == LinkState.Disconnecting ? "Отключается" : "Отключён";
             status.Text = state + (schedule.Watching ? "  ·  Наблюдение включено" : "  ·  Наблюдение выключено");
+            trayStatus.Text = status.Text;
+            tray.Text = Program.AppName + " · " + state;
+            trayStart.Enabled = watch.Enabled && !schedule.Watching;
+            trayStop.Enabled = watch.Enabled && schedule.Watching;
+            trayExit.Enabled = !busy;
             status.ForeColor = link == LinkState.Up ? Color.FromArgb(18, 101, 66) : Color.FromArgb(25, 44, 73);
             long waitMs = schedule.Due - clock.ElapsedMilliseconds;
             detail.Text = message + (schedule.Watching && pending == null && link == LinkState.Down && waitMs > 0 ?
                 " Следующая попытка через " + ((waitMs + 999) / 1000) + " с." : "");
         }
 
-        private void CloseSession()
+        private void RestoreWindow()
         {
+            Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+        }
+
+        private void HandleFormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (e.CloseReason == CloseReason.UserClosing && !exitRequested)
+            {
+                e.Cancel = true;
+                SaveSettings();
+                Hide();
+                return;
+            }
             closing = true;
             timer.Stop();
             StopWatch("");
+            tray.Visible = false;
+            SaveSettings();
+        }
+
+        private void SaveSettings()
+        {
             if (!settingsChanged) return;
-            try { new WatchSettings { Poll = (int)poll.Value, Connect = (int)connectTimeout.Value, Retry = (int)retry.Value, MaxRetry = (int)maxRetry.Value }.Save(); }
+            try
+            {
+                new WatchSettings { Poll = (int)poll.Value, Connect = (int)connectTimeout.Value, Retry = (int)retry.Value, MaxRetry = (int)maxRetry.Value }.Save();
+                settingsChanged = false;
+            }
             catch (IOException ex) { MessageBox.Show(this, "Не удалось сохранить интервалы. " + ex.Message, Text); }
             catch (UnauthorizedAccessException ex) { MessageBox.Show(this, "Не удалось сохранить интервалы. " + ex.Message, Text); }
         }

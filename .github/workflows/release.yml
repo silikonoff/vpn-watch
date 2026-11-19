@@ -1,0 +1,41 @@
+name: Release Windows ZIP
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Build and verify package
+        shell: powershell
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          .\Build.ps1 -Package
+          $file = Get-Item -LiteralPath 'dist/silik-vpn-watcher.exe'
+          $version = $file.VersionInfo
+          $expectedTag = 'v{0}.{1}.{2}' -f $version.FileMajorPart, $version.FileMinorPart, $version.FileBuildPart
+          if ($env:RELEASE_TAG -cne $expectedTag) {
+            throw "Tag $env:RELEASE_TAG does not match executable version $expectedTag."
+          }
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          $assets = @('dist/silik-vpn-watcher-windows-x64.zip', 'dist/SHA256SUMS.txt')
+          gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --verify-tag --notes-from-tag --title "silik-vpn-watcher $env:RELEASE_TAG"
