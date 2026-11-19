@@ -48,4 +48,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $assets = @('dist/silik-vpn-watcher-windows-x64.zip', 'dist/SHA256SUMS.txt')
-          gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --verify-tag --notes-from-tag --title "silik-vpn-watcher $env:RELEASE_TAG"
+          gh release create $env:RELEASE_TAG @assets --verify-tag --notes-from-tag --title "silik-vpn-watcher $env:RELEASE_TAG"
