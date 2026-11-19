@@ -4,24 +4,35 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing release tag (vX.Y.Z)
+        required: true
+        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
   release:
     runs-on: windows-2025
     permissions:
       contents: write
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
           persist-credentials: false
 
       - name: Build and verify package
         shell: powershell
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           .\Build.ps1 -Package
           $file = Get-Item -LiteralPath 'dist/silik-vpn-watcher.exe'
@@ -35,7 +46,6 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           $assets = @('dist/silik-vpn-watcher-windows-x64.zip', 'dist/SHA256SUMS.txt')
           gh release create $env:RELEASE_TAG @assets --repo $env:GITHUB_REPOSITORY --verify-tag --notes-from-tag --title "silik-vpn-watcher $env:RELEASE_TAG"
